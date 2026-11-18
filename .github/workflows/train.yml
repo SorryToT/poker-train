@@ -1,0 +1,56 @@
+# 다인원 홀덤 AI 자동 학습 (GitHub Actions)
+# - 6시간마다 자동으로 실행되고, 지난번 학습에 이어서 학습해요.
+# - 6인과 9인이 서로 다른 컴퓨터에서 동시에 학습돼요.
+# - 결과(mp6_strategy.json, mp9_strategy.json)는 Actions 탭 -> 실행 기록 -> Artifacts 에서 내려받아요.
+name: train
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"     # 6시간마다 (17분에 시작)
+  workflow_dispatch:            # Actions 탭에서 'Run workflow' 버튼으로 바로 시작
+
+concurrency:
+  group: train
+  cancel-in-progress: false     # 이전 실행이 끝나기 전에 새로 시작하지 않음
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355        # GitHub 한도 6시간보다 조금 짧게
+    strategy:
+      fail-fast: false
+      matrix:
+        players: [6, 9]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 이전 학습 불러오기
+        uses: actions/cache/restore@v4
+        with:
+          path: mp${{ matrix.players }}_checkpoint.pkl
+          key: mp${{ matrix.players }}-ckpt-${{ github.run_id }}
+          restore-keys: mp${{ matrix.players }}-ckpt-
+
+      - name: 학습 (5시간 20분)
+        run: python -u mp_cfr.py ${{ matrix.players }} 320
+
+      - name: 학습 상태 저장 (다음 실행이 이어받음)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: mp${{ matrix.players }}_checkpoint.pkl
+          key: mp${{ matrix.players }}-ckpt-${{ github.run_id }}
+
+      - name: 결과 파일 올리기
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mp${{ matrix.players }}-result
+          path: |
+            mp${{ matrix.players }}_strategy.json
+            mp${{ matrix.players }}_checkpoint.pkl
+          retention-days: 7
