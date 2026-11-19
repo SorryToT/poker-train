@@ -12,6 +12,13 @@
 - 한 판마다 '학습하는 사람(traverser)' 을 한 명씩 돌아가며 정하고
 - 그 사람 차례에서는 모든 행동을 다 시험해서 후회값을 계산,
 - 다른 사람들 차례에서는 현재 전략대로 하나씩 뽑아서 진행
+[2026-11-19] 학습 개선 (Pluribus 에서 가져옴)
+- Linear MCCFR: 나중 반복일수록 큰 가중치로 쌓아요 (초반에 대충 배운 값의 영향을 점점 줄임)
+  예전 체크포인트를 처음 불러오면, 지금까지 쌓인 값을 '평균 가중치' 로 한 번 바꿔서 이어가요 (linear 표시가 붙음)
+- 가지치기(pruning): 후회값이 아주 나쁜 행동은 95% 확률로 탐색을 건너뜀 (리버와 폴드는 항상 탐색)
+  -> 같은 시간에 더 많은 판을 학습
+- --no-report: 학습 후 평가를 건너뜀 (여러 개를 동시에 돌릴 때)
+
 """
 import json
 import os
@@ -41,6 +48,34 @@ def current_strategy(regrets):
     k = len(regrets)
     return [x / total for x in pos] if total > 0 else [1.0 / k] * k
 
+# ---------------------------------------------------------------------------
+# Linear MCCFR + 가지치기
+# ---------------------------------------------------------------------------
+LINEAR_UNIT = 10_000          # 이만큼 학습할 때마다 가중치 +1
+PRUNE_START = 200_000         # 이만큼 학습한 뒤부터 가지치기
+PRUNE_THRESHOLD = 1000.0      # 후회값이 -(이 값 x 현재 가중치) 보다 나쁘면 건너뜀 (칩 단위)
+prune_now = False
+linear = False
+
+
+def weight():
+    return max(1.0, iterations_done / LINEAR_UNIT)
+
+
+def to_linear():
+    """예전(가중치 없는) 체크포인트 -> Linear 형식으로 한 번 변환.
+    지금까지 T판 쌓인 값은 평균 가중치 (T/2)/LINEAR_UNIT 로 쌓였다고 보고 곱해줌"""
+    global linear
+    scale = max(1.0, iterations_done / 2 / LINEAR_UNIT)
+    if scale > 1.0:
+        for regrets, strat_sum in nodes.values():
+            for i in range(len(regrets)):
+                regrets[i] *= scale
+                strat_sum[i] *= scale
+    linear = True
+    print(f"  Linear MCCFR 로 변환 (기존 값 x{scale:.1f})")
+
+
 
 def traverse(state, traverser, labels, ranks):
     """traverser 의 기대 수익을 반환"""
@@ -57,23 +92,33 @@ def traverse(state, traverser, labels, ranks):
     if player == traverser:
         values = []
         node_value = 0.0
+        w = weight()
+        cut = -PRUNE_THRESHOLD * w
+        pruning = prune_now and state[0] < 3
         for i, a in enumerate(actions):
+            if pruning and regrets[i] < cut and a != "f":
+                values.append(None)              # 가지치기: 아주 나쁜 행동은 이번엔 탐색 안 함
+                continue
             nxt, payoff = step(state, a, ranks)
             v = payoff[traverser] if nxt is None else traverse(nxt, traverser, labels, ranks)
             values.append(v)
             node_value += strategy[i] * v
         for i in range(len(actions)):
-            regrets[i] += values[i] - node_value
+            if values[i] is not None:
+                regrets[i] += w * (values[i] - node_value)
         return node_value
 
+    w = weight()
     for i in range(len(actions)):
-        strat_sum[i] += strategy[i]
+        strat_sum[i] += w * strategy[i]
     a = random.choices(actions, weights=strategy)[0]
     nxt, payoff = step(state, a, ranks)
     return payoff[traverser] if nxt is None else traverse(nxt, traverser, labels, ranks)
 
 
 def train_one():
+    global prune_now
+    prune_now = iterations_done >= PRUNE_START and random.random() < 0.95
     n = N_PLAYERS
     holes, board = deal(n)
     labels = [bucket_labels(h, board) for h in holes]
@@ -103,6 +148,11 @@ def train_for(minutes):
     print(f"이번 실행: {iterations_done - start_iter:,}판, {time.time() - t0:.0f}초")
 
 
+def global_linear_on():
+    global linear
+    linear = True
+
+
 def load_checkpoint():
     global nodes, iterations_done
     ck, _ = paths(N_PLAYERS)
@@ -112,12 +162,19 @@ def load_checkpoint():
         nodes = data["nodes"]
         iterations_done = data["iterations"]
         print(f"이전 학습 불러옴 ({N_PLAYERS}인): {iterations_done:,}판, 정보집합 {len(nodes):,}개")
+        if data.get("linear"):
+            global linear
+            linear = True
+        else:
+            to_linear()
+    else:
+        global_linear_on()
 
 
 def save_all():
     ck, st = paths(N_PLAYERS)
     with open(ck + ".tmp", "wb") as f:
-        pickle.dump({"nodes": nodes, "iterations": iterations_done, "players": N_PLAYERS}, f)
+        pickle.dump({"nodes": nodes, "iterations": iterations_done, "players": N_PLAYERS, "linear": linear}, f)
     os.replace(ck + ".tmp", ck)
     strategy = {}
     for key, (_, strat_sum) in nodes.items():
@@ -185,6 +242,9 @@ def report(hands=3000):
 
 
 if __name__ == "__main__":
+    no_report = "--no-report" in sys.argv
+    if no_report:
+        sys.argv.remove("--no-report")
     N_PLAYERS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     minutes = float(sys.argv[2]) if len(sys.argv) > 2 else 10
     if not 2 <= N_PLAYERS <= 9:
@@ -197,5 +257,5 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("\n중단! 지금까지 학습한 내용을 저장합니다.")
         save_all()
-    if os.path.exists(paths(N_PLAYERS)[1]):
+    if os.path.exists(paths(N_PLAYERS)[1]) and not no_report:
         report()

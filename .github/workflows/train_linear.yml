@@ -1,0 +1,50 @@
+# 6인 AI 를 Linear MCCFR 로 '처음부터' 새로 학습 (기존 train.yml 과 따로 움직여요)
+# - 자동 예약 없음: Actions 탭 -> train-linear -> Run workflow 로 직접 시작
+# - 지난번 새 학습분만 이어받음 (기존 mp6 체크포인트는 불러오지 않음)
+# - 결과: Artifacts 의 mp6-linear-result (mp6_strategy.json 을 mp6b_strategy.json 으로 이름 바꿔 비교용으로 쓰세요)
+name: train-linear
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: train-linear
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 이전 새 학습분 불러오기
+        uses: actions/cache/restore@v4
+        with:
+          path: mp6_checkpoint.pkl
+          key: mp6-linear-ckpt-${{ github.run_id }}
+          restore-keys: mp6-linear-ckpt-
+
+      - name: 학습 (5시간 20분)
+        run: python -u mp_cfr.py 6 320 --no-report
+
+      - name: 학습 상태 저장
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: mp6_checkpoint.pkl
+          key: mp6-linear-ckpt-${{ github.run_id }}
+
+      - name: 결과 파일 올리기
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mp6-linear-result
+          path: |
+            mp6_strategy.json
+            mp6_checkpoint.pkl
+          retention-days: 7
