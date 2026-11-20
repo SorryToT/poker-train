@@ -5,7 +5,7 @@
     python mp_cfr.py 6 60      # 6인 테이블
     python mp_cfr.py 9 0       # 9인: 학습 없이 평가만
 
-- 인원별로 파일이 따로 생겨요: mp3_strategy.json / mp3_checkpoint.pkl, mp6_..., mp9_...
+- 인원별로 파일이 따로 생겨요 (MP_MAX_RAISES 를 바꾸면 mp6r4_... 처럼 꼬리표가 붙어요): mp3_strategy.json / mp3_checkpoint.pkl, mp6_..., mp9_...
 - 다시 실행하면 이어서 학습, 5분마다 자동 저장, Ctrl+C 로 멈춰도 저장
 
 다인원 MCCFR (Pluribus 와 같은 External Sampling 방식)
@@ -27,7 +27,7 @@ import random
 import sys
 import time
 
-from mp_engine import (ALLIN, CALL, POT, bucket_labels, deal, hand_ranks, info_key, legal_actions,
+from mp_engine import (ALLIN, CALL, POT, TAG, bucket_labels, deal, hand_ranks, info_key, legal_actions,
                        start_state, step)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +39,7 @@ N_PLAYERS = 3
 
 
 def paths(n):
-    return (os.path.join(HERE, f"mp{n}_checkpoint.pkl"), os.path.join(HERE, f"mp{n}_strategy.json"))
+    return (os.path.join(HERE, f"mp{n}{TAG}_checkpoint.pkl"), os.path.join(HERE, f"mp{n}{TAG}_strategy.json"))
 
 
 def current_strategy(regrets):
