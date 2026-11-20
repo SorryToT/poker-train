@@ -1,0 +1,87 @@
+# 6인 AI 를 '레이즈 제한 없음' 규칙(MP_MAX_RAISES=0)으로 계속 이어서 학습해요.
+# - 한 번 시작하면 끝날 때마다 스스로 다음 학습을 이어서 시작해요 (실패하면 거기서 멈춤)
+# - 한국 시간 오후 5시 전에는 40분씩, 오후 5시 이후에는 5시간 20분씩 길게 학습해요
+# - 매일 한국 시간 17:17 에도 한 번 확인해서 멈춰 있으면 다시 시작해요
+# - 멈추고 싶으면: Actions 탭 -> train-rfree -> 오른쪽 위 ... -> Disable workflow (그리고 실행 중인 건 Cancel)
+# - 결과: 실행 기록의 Artifacts 에서 mp6rfree-result (mp6rfree_strategy.json). 기존 mp6 와는 규칙이 달라 서로 합칠 수 없어요
+name: train-rfree
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "학습 시간(분). 비워두면 시간대에 맞춰 자동 (오후 5시 전 40분 / 이후 320분)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 8 * * *"      # 매일 한국 시간 17:17 (UTC 08:17)
+
+concurrency:
+  group: train-rfree
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write              # 다음 학습을 스스로 시작하려고 필요해요
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 이번 학습 시간 정하기
+        id: plan
+        run: |
+          H=$((10#$(TZ=Asia/Seoul date +%H)))
+          INPUT="${{ github.event.inputs.minutes }}"
+          if [ -n "$INPUT" ]; then
+            M="$INPUT"
+          elif [ "$H" -ge 17 ]; then
+            M=320
+          else
+            M=40
+          fi
+          echo "한국 시간 ${H}시 -> ${M}분 학습"
+          echo "minutes=$M" >> "$GITHUB_OUTPUT"
+
+      - name: 이전 학습분 불러오기
+        uses: actions/cache/restore@v4
+        with:
+          path: mp6rfree_checkpoint.pkl
+          key: mp6rfree-ckpt-${{ github.run_id }}
+          restore-keys: mp6rfree-ckpt-
+
+      - name: 학습
+        id: fit
+        env:
+          MP_MAX_RAISES: "0"
+        run: python -u mp_cfr.py 6 ${{ steps.plan.outputs.minutes }} --no-report
+
+      - name: 학습 상태 저장
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: mp6rfree_checkpoint.pkl
+          key: mp6rfree-ckpt-${{ github.run_id }}
+
+      - name: 결과 파일 올리기
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mp6rfree-result
+          retention-days: 7
+          path: |
+            mp6rfree_strategy.json
+            mp6rfree_checkpoint.pkl
+
+      - name: 다음 학습 이어서 시작
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run train-rfree.yml --ref "${{ github.ref_name }}" --repo "${{ github.repository }}"

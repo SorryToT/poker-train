@@ -14,12 +14,13 @@
 행동 추상화 (AI 가 생각하는 행동)
     f 폴드, c 체크/콜, h ½팟, p 팟, a 올인
 - 스트리트 첫 베팅(프리플랍은 첫 레이즈) 은 ½팟/팟, 그 뒤 리레이즈는 팟만
-- 스트리트당 레이즈 최대 2번 (그 뒤로는 콜/폴드/올인)
+- 스트리트당 레이즈 최대 MAX_RAISES 번, 기본 2 (그 뒤로는 콜/폴드/올인)
 
 게임 상태 (튜플):
 (스트리트, 현재 차례, 행동기록, 투입칩 튜플, 폴드 여부 튜플, 이번 스트리트 레이즈 수, 직전 레이즈 크기, 남은 행동 수)
 - 남은 행동 수: 이번 라운드가 끝나려면 앞으로 몇 명이 더 행동해야 하는지. 누가 레이즈하면 다시 늘어남
 """
+import os
 from holdem_engine import (BOARD_COUNT, STREET_NAMES, bucket_labels, card_str, evaluate,  # noqa: F401
                            hand_name, info_key)
 import random
@@ -27,7 +28,14 @@ import random
 FOLD, CALL, HALF, POT, ALLIN = "f", "c", "h", "p", "a"
 STACK = 200
 BB = 2
-MAX_RAISES = 2
+# 스트리트당 레이즈 최대 횟수. 기본 2 (기존 학습 결과와 같은 규칙).
+# 실전에 더 가까운 규칙으로 따로 학습/비교하려면 환경변수로 바꿔요. 예) Windows: set MP_MAX_RAISES=4  (0 이면 제한 없음)
+# 규칙이 다르면 행동 기록이 달라서 전략 파일을 서로 섞을 수 없어요 -> 파일 이름에 r4 같은 꼬리표(TAG)가 붙어요.
+# 0 이면 '제한 없음' (실전과 같음). 팟 크기 레이즈가 이어지면 스택이 금방 차서 올인만 남기 때문에 트리가 무한히 커지지는 않아요.
+MAX_RAISES = int(os.environ.get("MP_MAX_RAISES", "2"))
+TAG = "" if MAX_RAISES == 2 else ("rfree" if MAX_RAISES == 0 else f"r{MAX_RAISES}")
+if MAX_RAISES == 0:
+    MAX_RAISES = 99
 FRACTIONS = {HALF: 0.5, POT: 1.0}
 RAISE_ACTIONS = (HALF, POT, ALLIN)
 
